@@ -1,12 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/$/, '')
-
-const API_URL = `${API_BASE_URL}/api/chargers`
-const AUTH_URL = `${API_BASE_URL}/api/auth`
-const CUSTOMER_AUTH_URL = `${API_BASE_URL}/api/customer-auth`
-
+const API_URL = 'http://localhost:8080/api/chargers'
+const AUTH_URL = 'http://localhost:8080/api/auth'
+const CUSTOMER_AUTH_URL = 'http://localhost:8080/api/customer-auth'
 
 const initialHostForm = {
   name: '',
@@ -23,6 +20,8 @@ function App() {
   const [searchSubmitted, setSearchSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [searchError, setSearchError] = useState('')
+  const [locationBusy, setLocationBusy] = useState(false)
+  const [userCoordinates, setUserCoordinates] = useState(null)
 
   const [showHostForm, setShowHostForm] = useState(false)
   const [showHostDashboard, setShowHostDashboard] = useState(false)
@@ -34,6 +33,8 @@ function App() {
   const [qrUploadMessages, setQrUploadMessages] = useState({})
 
   const [hostForm, setHostForm] = useState(initialHostForm)
+  const [hostCoordinates, setHostCoordinates] = useState(null)
+  const [hostLocationBusy, setHostLocationBusy] = useState(false)
   const [hostLoading, setHostLoading] = useState(false)
   const [hostMessage, setHostMessage] = useState('')
   const [hostError, setHostError] = useState('')
@@ -72,12 +73,16 @@ function App() {
   })
 
   const [selectedCharger, setSelectedCharger] = useState(null)
-  const [bookingDate, setBookingDate] = useState(() => { const d = new Date(Date.now() + 3600000); d.setMinutes(0, 0, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })
+  const [bookingDate, setBookingDate] = useState(() => { const d = new Date(Date.now() + 3600000); d.setMinutes(0,0,0); return d.toISOString().slice(0,10) })
   const [bookingTime, setBookingTime] = useState('10:00')
   const [bookingDuration, setBookingDuration] = useState('1')
   const [bookingLoading, setBookingLoading] = useState(false)
   const [bookingError, setBookingError] = useState('')
   const [bookingMessage, setBookingMessage] = useState('')
+  const [calendarView, setCalendarView] = useState('week')
+  const [calendarBookings, setCalendarBookings] = useState([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarError, setCalendarError] = useState('')
   const [customerBookings, setCustomerBookings] = useState([])
   const [reviewForms, setReviewForms] = useState({})
   const [reviewSubmittingId, setReviewSubmittingId] = useState(null)
@@ -92,7 +97,88 @@ function App() {
   const [bookingHistoryError, setBookingHistoryError] = useState('')
   const [showCustomerBookings, setShowCustomerBookings] = useState(false)
 
+  // Notifications are loaded from the backend when its notification API is available.
+  const [notifications, setNotifications] = useState([])
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [notificationError, setNotificationError] = useState('')
+  const [demoPayments, setDemoPayments] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('chargeshareDemoPayments') || '{}') }
+    catch { return {} }
+  })
+  const [demoPaymentMessage, setDemoPaymentMessage] = useState('')
+
   const signedInAccount = hostAccount || customerAccount
+
+  const loadNotifications = async (account = signedInAccount) => {
+    if (!account?.token) {
+      setNotifications([])
+      setUnreadNotificationCount(0)
+      return
+    }
+    try {
+      const response = await fetch('http://localhost:8080/api/notifications', {
+        headers: { Authorization: `Bearer ${account.token}` },
+      })
+      if (!response.ok) throw new Error(`Unable to load notifications (${response.status}).`)
+      const data = await response.json()
+      // Keep only unread items in the panel. Read notifications stay hidden on future refreshes.
+      const unreadNotifications = (Array.isArray(data.notifications) ? data.notifications : [])
+        .filter((notification) => !notification.read)
+      setNotifications(unreadNotifications)
+      setUnreadNotificationCount(unreadNotifications.length)
+      setNotificationError('')
+    } catch (error) {
+      setNotificationError('Notifications need the backend notification API to be running. ' + (error.message || ''))
+    }
+  }
+
+  useEffect(() => {
+    if (!signedInAccount?.token) {
+      setNotifications([])
+      setUnreadNotificationCount(0)
+      setShowNotifications(false)
+      setNotificationError('')
+      return
+    }
+    loadNotifications(signedInAccount)
+    const timer = window.setInterval(() => loadNotifications(signedInAccount), 20000)
+    return () => window.clearInterval(timer)
+  }, [signedInAccount?.token])
+
+  const markNotificationRead = async (notificationId) => {
+    if (!signedInAccount?.token) return
+    try {
+      const response = await fetch(`http://localhost:8080/api/notifications/${notificationId}/read`, {
+        method: 'PATCH', headers: { Authorization: `Bearer ${signedInAccount.token}` },
+      })
+      if (!response.ok) throw new Error(`Could not mark notification as read (${response.status}).`)
+      await loadNotifications(signedInAccount)
+    } catch (error) { setNotificationError(error.message || 'Could not update notification.') }
+  }
+
+  const markAllNotificationsRead = async () => {
+    if (!signedInAccount?.token) return
+    try {
+      const response = await fetch('http://localhost:8080/api/notifications/read-all', {
+        method: 'PATCH', headers: { Authorization: `Bearer ${signedInAccount.token}` },
+      })
+      if (!response.ok) throw new Error(`Could not mark notifications as read (${response.status}).`)
+      // Clear the panel immediately after the server confirms the action.
+      setNotifications([])
+      setUnreadNotificationCount(0)
+      setNotificationError('')
+    } catch (error) { setNotificationError(error.message || 'Could not update notifications.') }
+  }
+
+  // Frontend-only payment simulation for demonstration; it does not claim to verify real money.
+  const handleSimulatePayment = (booking) => {
+    const key = `${customerAccount?.email || 'customer'}:${booking.id}`
+    const next = { ...demoPayments, [key]: { status: 'DEMO_PAID', amount: Number(booking.totalPrice || 0), updatedAt: new Date().toISOString() } }
+    setDemoPayments(next)
+    localStorage.setItem('chargeshareDemoPayments', JSON.stringify(next))
+    setDemoPaymentMessage(`Demo payment completed for booking #${booking.id}. This is a simulation only; the host must still verify the actual payment in the backend.`)
+  }
 
   const localDateString = (date) => {
     const year = date.getFullYear()
@@ -100,6 +186,67 @@ function App() {
     const day = String(date.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
   }
+
+  const dateAtLocalTime = (dateString, timeString) =>
+    new Date(`${dateString}T${timeString}:00`)
+
+  const calendarRange = (dateString, view) => {
+    const selected = dateAtLocalTime(dateString, '00:00')
+    const start = new Date(selected)
+    if (view === 'week') {
+      const day = (start.getDay() + 6) % 7
+      start.setDate(start.getDate() - day)
+    }
+    const end = new Date(start)
+    end.setDate(end.getDate() + (view === 'week' ? 7 : 1))
+    return { start, end }
+  }
+
+  useEffect(() => {
+    if (!selectedCharger?.id || !bookingDate) return
+    const { start, end } = calendarRange(bookingDate, calendarView)
+    const params = new URLSearchParams({
+      start: `${localDateString(start)}T00:00:00`,
+      end: `${localDateString(end)}T00:00:00`,
+    })
+    let cancelled = false
+    setCalendarLoading(true)
+    setCalendarError('')
+    fetch(`http://localhost:8080/api/bookings/charger/${selectedCharger.id}/availability?${params}`, { headers: { Authorization: `Bearer ${customerAccount?.token || ''}` } })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.error || `Availability could not be loaded (${response.status}).`)
+        return data
+      })
+      .then((data) => {
+        if (!cancelled) setCalendarBookings(Array.isArray(data) ? data : [])
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCalendarBookings([])
+          setCalendarError(error.message || 'Availability could not be loaded.')
+        }
+      })
+      .finally(() => { if (!cancelled) setCalendarLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedCharger?.id, bookingDate, calendarView])
+
+  const slotIsBusy = (dateString, timeString, durationHours = Number(bookingDuration || 1)) => {
+    const slotStart = dateAtLocalTime(dateString, timeString)
+    const slotEnd = new Date(slotStart.getTime() + durationHours * 60 * 60 * 1000)
+    return calendarBookings.some((booking) => {
+      const busyStart = new Date(booking.startTime)
+      const busyEnd = new Date(booking.endTime)
+      return slotStart < busyEnd && slotEnd > busyStart
+    })
+  }
+
+  const selectCalendarSlot = (dateString, timeString) => {
+    setBookingDate(dateString)
+    setBookingTime(timeString)
+    setBookingError('')
+  }
+
 
   const scrollTo = (id) => {
     document.getElementById(id)?.scrollIntoView({
@@ -112,16 +259,96 @@ function App() {
   // CHARGER SEARCH
   // --------------------------------------------------
 
-  const handleSearch = async (event) => {
-    event.preventDefault()
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setSearchError('This browser does not support location access. Please use a browser with location services enabled.')
+      return
+    }
 
-    if (!location.trim()) {
+    setLocationBusy(true)
+    setSearchError('')
+    setUserCoordinates(null)
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        try {
+          // Do not silently treat a broad IP/Wi-Fi estimate as the customer's exact location.
+          if (!Number.isFinite(coords.accuracy) || coords.accuracy > 5000) {
+            setUserCoordinates(null)
+            throw new Error(
+              `Your device location is only accurate to about ${Number.isFinite(coords.accuracy) ? (coords.accuracy / 1000).toFixed(1) + ' km' : 'an unknown distance'}. For reliable nearby results, enable precise location on your device and try again.`
+            )
+          }
+
+          const preciseCoordinates = {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy: coords.accuracy,
+          }
+          setUserCoordinates(preciseCoordinates)
+
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(coords.latitude)}&lon=${encodeURIComponent(coords.longitude)}`
+          )
+          if (!response.ok) throw new Error('Your coordinates were received, but your area could not be identified. Please try again.')
+          const data = await response.json()
+          const address = data.address || {}
+          const locality =
+            address.suburb ||
+            address.neighbourhood ||
+            address.town ||
+            address.city_district ||
+            address.city ||
+            address.village ||
+            address.county
+          const city = address.city || address.town || address.village || address.county
+          const resolvedLocation = [locality, city]
+            .filter(Boolean)
+            .filter((value, index, arr) => arr.indexOf(value) === index)
+            .join(', ')
+
+          if (!resolvedLocation) {
+            throw new Error('Your location was detected, but its city could not be identified. Please try again.')
+          }
+
+          setLocation(resolvedLocation)
+          await handleSearch(
+            { preventDefault() {} },
+            resolvedLocation,
+            preciseCoordinates
+          )
+        } catch (error) {
+          setSearchSubmitted(true)
+          setChargers([])
+          setSearchError(error.message || 'Could not determine your current location. Please try again.')
+        } finally {
+          setLocationBusy(false)
+        }
+      },
+      (error) => {
+        const messages = {
+          1: 'Location permission was denied. Allow location access in your browser settings and try again.',
+          2: 'Your device could not determine a location. Check device location services and try again.',
+          3: 'Location request timed out. Move to an area with a better signal and try again.',
+        }
+        setSearchError(messages[error.code] || 'Could not access your current location.')
+        setLocationBusy(false)
+      },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+    )
+  }
+
+  const handleSearch = async (event, locationOverride = null, coordinatesOverride = null) => {
+    event.preventDefault()
+    const searchLocation = (locationOverride ?? location).trim()
+    const searchCoordinates = coordinatesOverride ?? userCoordinates
+
+    if (!searchLocation) {
       setSearchError('Please enter a city or area.')
       setSearchSubmitted(true)
       return
     }
 
-    const parts = location.trim().split(',')
+    const parts = searchLocation.split(',')
     const city = parts[parts.length - 1].trim()
 
     setLoading(true)
@@ -144,10 +371,10 @@ function App() {
       }
 
       const chargerResults = await response.json()
-      const rankedChargers = await Promise.all(
+      let rankedChargers = await Promise.all(
         (Array.isArray(chargerResults) ? chargerResults : []).map(async (charger) => {
           try {
-            const reviewResponse = await fetch(`${API_BASE_URL}/api/reviews/charger/${charger.id}`)
+            const reviewResponse = await fetch(`http://localhost:8080/api/reviews/charger/${charger.id}`)
             if (!reviewResponse.ok) return { ...charger, averageChargerRating: null, reviewCount: 0 }
             const reviewData = await reviewResponse.json()
             const reviews = Array.isArray(reviewData.reviews) ? reviewData.reviews : []
@@ -163,21 +390,53 @@ function App() {
           }
         })
       )
-      rankedChargers.sort((a, b) => {
-        const ratingA = a.averageChargerRating
-        const ratingB = b.averageChargerRating
-        const tier = (rating, count) => {
-          if (!count || rating == null) return 0
-          if (rating >= 4.5) return 3
-          if (rating >= 3.5) return 2
-          return 1
+      const distanceKm = (lat1, lon1, lat2, lon2) => {
+        const toRadians = (value) => (value * Math.PI) / 180
+        const dLat = toRadians(lat2 - lat1)
+        const dLon = toRadians(lon2 - lon1)
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2
+        return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+      }
+
+      if (searchCoordinates && rankedChargers.some((charger) => Number.isFinite(Number(charger.latitude ?? charger.lat)) && Number.isFinite(Number(charger.longitude ?? charger.lng ?? charger.lon)))) {
+        rankedChargers.sort((a, b) => {
+          const getDistance = (charger) => {
+            const lat = Number(charger.latitude ?? charger.lat)
+            const lon = Number(charger.longitude ?? charger.lng ?? charger.lon)
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return Number.POSITIVE_INFINITY
+            return distanceKm(searchCoordinates.latitude, searchCoordinates.longitude, lat, lon)
+          }
+          return getDistance(a) - getDistance(b)
+        })
+        rankedChargers = rankedChargers.map((charger) => {
+          const lat = Number(charger.latitude ?? charger.lat)
+          const lon = Number(charger.longitude ?? charger.lng ?? charger.lon)
+          return Number.isFinite(lat) && Number.isFinite(lon)
+            ? { ...charger, distanceKm: distanceKm(searchCoordinates.latitude, searchCoordinates.longitude, lat, lon) }
+            : charger
+        })
+      } else {
+        // Without coordinates for charger records, nearest-first ordering cannot be calculated.
+        // Keep review ranking for ordinary city searches, but clearly tell location-search users.
+        if (searchCoordinates && rankedChargers.length > 0) {
+          setSearchError('Your location was detected, but these charger records do not contain coordinates. Nearest-first sorting is unavailable until charger latitude/longitude is saved in the backend.')
         }
-        const tierDifference = tier(ratingB, b.reviewCount) - tier(ratingA, a.reviewCount)
-        if (tierDifference !== 0) return tierDifference
-        if (ratingA != null && ratingB != null && ratingA !== ratingB) return ratingB - ratingA
-        if (a.reviewCount !== b.reviewCount) return b.reviewCount - a.reviewCount
-        return String(a.name || '').localeCompare(String(b.name || ''))
-      })
+        rankedChargers.sort((a, b) => {
+          const ratingA = a.averageChargerRating
+          const ratingB = b.averageChargerRating
+          const tier = (rating, count) => {
+            if (!count || rating == null) return 0
+            if (rating >= 4.5) return 3
+            if (rating >= 3.5) return 2
+            return 1
+          }
+          const tierDifference = tier(ratingB, b.reviewCount) - tier(ratingA, a.reviewCount)
+          if (tierDifference !== 0) return tierDifference
+          if (ratingA != null && ratingB != null && ratingA !== ratingB) return ratingB - ratingA
+          if (a.reviewCount !== b.reviewCount) return b.reviewCount - a.reviewCount
+          return String(a.name || '').localeCompare(String(b.name || ''))
+        })
+      }
       setChargers(rankedChargers)
     } catch (error) {
       console.error('Charger search failed:', error)
@@ -393,15 +652,16 @@ function App() {
     setSelectedCharger(charger); setBookingError(''); setBookingMessage('')
     const d = new Date(Date.now() + 3600000); d.setMinutes(0,0,0)
     setBookingDate(localDateString(d)); setBookingTime(`${String(d.getHours()).padStart(2,'0')}:00`)
-    setBookingDuration('1'); window.setTimeout(() => scrollTo('booking-section'), 120)
+    setBookingDuration('1'); setCalendarView('week'); setCalendarBookings([]); setCalendarError(''); window.setTimeout(() => scrollTo('booking-section'), 120)
   }
 
   const handleCreateBooking = async (event) => {
     event.preventDefault()
     if (!customerAccount?.token || !selectedCharger) { openAuth('login', 'customer'); return }
+    if (slotIsBusy(bookingDate, bookingTime)) { setBookingError('This start time conflicts with an existing booking. Choose another green time slot.'); return }
     setBookingLoading(true); setBookingError(''); setBookingMessage('')
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bookings`, {
+      const response = await fetch('http://localhost:8080/api/bookings', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerAccount.token}` },
         body: JSON.stringify({ chargerId: selectedCharger.id, startTime: `${bookingDate}T${bookingTime}:00`, durationHours: Number(bookingDuration) })
       })
@@ -417,7 +677,7 @@ function App() {
     if (!customerAccount?.token) { openAuth('login', 'customer'); return }
     setShowCustomerBookings(true); setBookingHistoryLoading(true); setBookingHistoryError('')
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bookings/customer`, { headers: { Authorization: `Bearer ${customerAccount.token}` } })
+      const response = await fetch('http://localhost:8080/api/bookings/customer', { headers: { Authorization: `Bearer ${customerAccount.token}` } })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || data.message || `Could not load bookings (${response.status}).`)
       const bookings = Array.isArray(data) ? data : []
@@ -426,7 +686,7 @@ function App() {
       // Check which bookings already have a review, without blocking booking history if this endpoint is unavailable.
       const reviewChecks = await Promise.all(bookings.map(async (booking) => {
         try {
-          const reviewResponse = await fetch(`${API_BASE_URL}/api/reviews/booking/${booking.id}/mine`, {
+          const reviewResponse = await fetch(`http://localhost:8080/api/reviews/booking/${booking.id}/mine`, {
             headers: { Authorization: `Bearer ${customerAccount.token}` },
           })
           return reviewResponse.ok ? booking.id : null
@@ -465,7 +725,7 @@ function App() {
     setReviewSubmittingId(booking.id)
     setReviewMessages((previous) => ({ ...previous, [booking.id]: null }))
     try {
-      const response = await fetch(`${API_BASE_URL}/api/reviews`, {
+      const response = await fetch('http://localhost:8080/api/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerAccount.token}` },
         body: JSON.stringify({
@@ -494,7 +754,7 @@ function App() {
     setHostBookingActionId(bookingId)
     setBookingHistoryError('')
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bookings/${bookingId}/cancel`, {
+      const response = await fetch(`http://localhost:8080/api/bookings/${bookingId}/cancel`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${customerAccount.token}` },
       })
@@ -512,7 +772,7 @@ function App() {
   const handleLoadHostBookings = async () => {
     if (!hostAccount?.token) return
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bookings/host`, { headers: { Authorization: `Bearer ${hostAccount.token}` } })
+      const response = await fetch('http://localhost:8080/api/bookings/host', { headers: { Authorization: `Bearer ${hostAccount.token}` } })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || data.message || `Could not load bookings (${response.status}).`)
       setHostBookings(Array.isArray(data) ? data : []); setBookingHistoryError('')
@@ -530,7 +790,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/bookings/${bookingId}/${decision}`,
+        `http://localhost:8080/api/bookings/${bookingId}/${decision}`,
         {
           method: 'PATCH',
           headers: {
@@ -570,7 +830,7 @@ function App() {
     setBookingHistoryError('')
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/bookings/${bookingId}/payment/${decision}`,
+        `http://localhost:8080/api/bookings/${bookingId}/payment/${decision}`,
         {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${hostAccount.token}` },
@@ -600,7 +860,7 @@ function App() {
     setEarningsLoading(true)
     setEarningsError('')
     try {
-      const response = await fetch(`${API_BASE_URL}/api/earnings/host`, {
+      const response = await fetch('http://localhost:8080/api/earnings/host', {
         headers: { Authorization: `Bearer ${hostAccount.token}` },
       })
       const data = await response.json().catch(() => ({}))
@@ -741,6 +1001,49 @@ function App() {
     setHostError('')
   }
 
+  const handleCaptureHostLocation = () => {
+    if (!navigator.geolocation) {
+      setHostError('This browser does not support location access. Please enter the address and use a supported browser to save coordinates.')
+      return
+    }
+
+    setHostLocationBusy(true)
+    setHostMessage('')
+    setHostError('')
+
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (!Number.isFinite(coords.latitude) || !Number.isFinite(coords.longitude) ||
+            coords.latitude < -90 || coords.latitude > 90 ||
+            coords.longitude < -180 || coords.longitude > 180) {
+          setHostError('Your device returned invalid coordinates. Please try again.')
+          setHostLocationBusy(false)
+          return
+        }
+
+        setHostCoordinates({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy: coords.accuracy,
+        })
+        setHostMessage(
+          `Charger location captured${Number.isFinite(coords.accuracy) ? ` (accuracy about ${Math.round(coords.accuracy)} m)` : ''}. It will be saved with the charger when you register it.`
+        )
+        setHostLocationBusy(false)
+      },
+      (error) => {
+        const messages = {
+          1: 'Location permission was denied. Allow location access in your browser settings and try again.',
+          2: 'Your device could not determine a location. Check device location services and try again.',
+          3: 'Location request timed out. Try again in a place with a better signal.',
+        }
+        setHostError(messages[error.code] || 'Could not access your current location.')
+        setHostLocationBusy(false)
+      },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+    )
+  }
+
   const handleHostSubmit = async (event) => {
     event.preventDefault()
 
@@ -759,6 +1062,7 @@ function App() {
       address: hostForm.address.trim(),
       vehicleType: hostForm.vehicleType,
       pricePerHour: Number(hostForm.pricePerHour),
+      ...(hostCoordinates ? { latitude: hostCoordinates.latitude, longitude: hostCoordinates.longitude } : {}),
     }
 
     try {
@@ -798,6 +1102,7 @@ function App() {
       )
 
       setHostForm(initialHostForm)
+      setHostCoordinates(null)
 
       if (showHostDashboard) {
         handleLoadHostDashboard()
@@ -935,6 +1240,32 @@ function App() {
             >
               Log in
             </button>
+          )}
+
+          {signedInAccount?.token && (
+            <div className="notification-wrap">
+              <button className="login-btn notification-trigger" type="button"
+                aria-label={`Notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ''}`}
+                aria-expanded={showNotifications}
+                onClick={() => { const next = !showNotifications; setShowNotifications(next); if (next) loadNotifications() }}>
+                <span aria-hidden="true">🔔</span><span>Notifications</span>
+                {unreadNotificationCount > 0 && <span className="notification-count">{unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}</span>}
+              </button>
+              {showNotifications && <div className="notification-panel" role="region" aria-label="Notifications">
+                <div className="notification-panel-heading"><strong>Notifications</strong>
+                  <button type="button" onClick={markAllNotificationsRead} disabled={unreadNotificationCount === 0}>Mark all read</button>
+                </div>
+                {notificationError && <p className="notification-error" role="alert">{notificationError}</p>}
+                {notifications.length === 0 ? <p className="notification-empty">You’re all caught up. Read notifications are hidden from this panel.</p> : notifications.map((notification) => <article className={`notification-item${notification.read ? '' : ' unread'}`} key={notification.id}>
+                  <div className="notification-item-row">{!notification.read && <span className="notification-unread-dot" />}
+                    <div className="notification-item-content"><strong>{notification.title}</strong><p>{notification.message}</p>
+                      <small>{notification.createdAt ? new Date(notification.createdAt).toLocaleString() : ''}</small>
+                      {!notification.read && <button type="button" onClick={() => markNotificationRead(notification.id)}>Mark as read</button>}
+                    </div>
+                  </div>
+                </article>)}
+              </div>}
+            </div>
           )}
 
           {customerAccount?.token && <button className="login-btn" type="button" onClick={handleLoadCustomerBookings}>My bookings</button>}
@@ -1422,14 +1753,25 @@ function App() {
               />
             </div>
 
-            <button
-              className="primary-btn"
-              type="submit"
-              disabled={loading}
-            >
-              {loading ? 'Searching...' : 'Explore chargers'}
-              {!loading && <span>→</span>}
-            </button>
+            <div className="search-action-group" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                className="secondary-link"
+                type="button"
+                onClick={handleUseCurrentLocation}
+                disabled={locationBusy || loading}
+                aria-label="Use my current location to find nearby chargers"
+              >
+                {locationBusy ? 'Finding location…' : '⌖ Use my current location'}
+              </button>
+              <button
+                className="primary-btn"
+                type="submit"
+                disabled={loading || locationBusy}
+              >
+                {loading ? 'Searching...' : 'Explore chargers'}
+                {!loading && <span>→</span>}
+              </button>
+            </div>
           </form>
 
           {searchSubmitted && (
@@ -1476,6 +1818,7 @@ function App() {
                         <p>
                           {charger.address}, {charger.city}
                         </p>
+                        {Number.isFinite(charger.distanceKm) && <p className="charger-distance">📍 {charger.distanceKm.toFixed(1)} km away</p>}
 
                         <p>
                           {charger.vehicleType === 'car'
@@ -1520,49 +1863,24 @@ function App() {
           <button type="button" className="secondary-link" onClick={() => setSelectedCharger(null)}>← Cancel</button>
           <div className="section-heading"><span className="section-tag">LIVE CHARGER AVAILABILITY</span><h2>Book <span>{selectedCharger.name}</span></h2><p>{selectedCharger.address}, {selectedCharger.city} · ₹{selectedCharger.pricePerHour} per hour</p></div>
 
-          <form className="host-form" onSubmit={handleCreateBooking}>
+          <div style={{ border: '1px solid #dce9e0', borderRadius: '18px', background: '#fff', padding: 'clamp(14px, 2.5vw, 24px)', marginBottom: '22px' }}>
+            <h3 style={{ margin: '0 0 8px', color: '#173b2a' }}>Choose your booking time</h3>
+            <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: '.92rem' }}>Select a date, start time, and duration. Existing bookings are checked before confirmation.</p>
             <div className="form-field">
               <label htmlFor="booking-date">Booking date</label>
-              <input
-                id="booking-date"
-                type="date"
-                value={bookingDate}
-                min={localDateString(new Date())}
-                onChange={(event) => { setBookingDate(event.target.value); setBookingError('') }}
-                required
-              />
+              <input id="booking-date" type="date" value={bookingDate} min={localDateString(new Date())} onChange={e => { setBookingDate(e.target.value); setBookingError('') }} required />
             </div>
-            <div className="form-field">
-              <label htmlFor="booking-time">Start time</label>
-              <input
-                id="booking-time"
-                type="time"
-                step="1800"
-                value={bookingTime}
-                onChange={(event) => { setBookingTime(event.target.value); setBookingError('') }}
-                required
-              />
-            </div>
-            <div className="form-field">
-              <label htmlFor="booking-duration">Duration</label>
-              <select id="booking-duration" value={bookingDuration} onChange={(event) => setBookingDuration(event.target.value)} required>
-                {Array.from({ length: 24 }, (_, index) => index + 1).map((hours) => (
-                  <option key={hours} value={hours}>{hours} hour{hours > 1 ? 's' : ''}</option>
-                ))}
-              </select>
-            </div>
-            <div className="dashboard-notice">
-              <span className="notice-icon">₹</span>
-              <div>
-                <strong>Estimated total: ₹{(Number(selectedCharger.pricePerHour) * Number(bookingDuration || 1)).toFixed(2)}</strong>
-                <p>Choose your preferred date, start time, and duration. The server will validate the booking when you confirm.</p>
-              </div>
-            </div>
-            <button className="primary-btn" type="submit" disabled={bookingLoading}>
-              {bookingLoading ? 'Booking...' : 'Confirm booking →'}
-            </button>
-            {bookingError && <p className="error-message" role="alert">{bookingError}</p>}
-            {bookingMessage && <p className="success-message" role="status">{bookingMessage}</p>}
+            {calendarLoading && <p role="status">Checking existing bookings…</p>}
+            {calendarError && <p className="error-message" role="alert">{calendarError} The server will perform the final availability check.</p>}
+          </div>
+
+          <form className="host-form" onSubmit={handleCreateBooking}>
+            <div className="form-field"><label htmlFor="booking-time">Selected start time</label><input id="booking-time" type="time" step="1800" value={bookingTime} onChange={e => setBookingTime(e.target.value)} required /></div>
+            <div className="form-field"><label htmlFor="booking-duration">Duration</label><select id="booking-duration" value={bookingDuration} onChange={e => setBookingDuration(e.target.value)} required>{Array.from({length:24},(_,i)=>i+1).map(h=><option key={h} value={h}>{h} hour{h>1?'s':''}</option>)}</select></div>
+            {slotIsBusy(bookingDate, bookingTime) && <p className="error-message" role="alert">This start time conflicts with an existing booking. Choose another green time slot.</p>}
+            <div className="dashboard-notice"><span className="notice-icon">₹</span><div><strong>Estimated total: ₹{(Number(selectedCharger.pricePerHour)*Number(bookingDuration||1)).toFixed(2)}</strong><p>Requests are saved with status PENDING. The server performs the final overlap check when you confirm.</p></div></div>
+            <button className="primary-btn" type="submit" disabled={bookingLoading || slotIsBusy(bookingDate, bookingTime)}>{bookingLoading?'Booking...':'Confirm booking →'}</button>
+            {bookingError && <p className="error-message" role="alert">{bookingError}</p>}{bookingMessage && <p className="success-message" role="status">{bookingMessage}</p>}
           </form>
         </section>}
 
@@ -1579,7 +1897,7 @@ function App() {
               <div className="search-result-grid">
                 {customerBookings.map((b) => {
                   const qrUrl = b.paymentQrPath
-                    ? (b.paymentQrPath.startsWith('http') ? b.paymentQrPath : `${API_BASE_URL}${b.paymentQrPath}`)
+                    ? (b.paymentQrPath.startsWith('http') ? b.paymentQrPath : `http://localhost:8080${b.paymentQrPath}`)
                     : null
                   return (
                     <article className="search-charger-card" key={b.id}>
@@ -1591,6 +1909,8 @@ function App() {
                       <strong>Amount: ₹{Number(b.totalPrice).toFixed(2)}</strong>
                       <p>Booking status: <strong>{b.status}</strong></p>
                       <p>Payment status: <strong>{b.paymentStatus || 'PENDING'}</strong></p>
+                      {demoPayments[`${customerAccount?.email || 'customer'}:${b.id}`] && <p className="demo-payment-status"><strong>Demo payment:</strong> completed locally · ₹{Number(demoPayments[`${customerAccount?.email || 'customer'}:${b.id}`].amount || 0).toFixed(2)}</p>}
+                      {demoPaymentMessage && <p className="success-message" role="status">{demoPaymentMessage}</p>}
                       {['PENDING', 'APPROVED'].includes(String(b.status || '').toUpperCase()) && String(b.paymentStatus || 'PENDING').toUpperCase() !== 'VERIFIED' && (
                         <button
                           className="secondary-link"
@@ -1605,6 +1925,10 @@ function App() {
                       {String(b.status).toUpperCase() === 'APPROVED' && String(b.paymentStatus || 'PENDING').toUpperCase() === 'PENDING' && (
                         <div style={{ marginTop: '14px', padding: '14px', border: '1px solid #dbe7df', borderRadius: '12px' }}>
                           <h4 style={{ marginTop: 0 }}>Pay the host</h4>
+                          <p style={{ fontSize: '12px', color: '#64748b' }}>For interface testing only, you can simulate a payment below. No real money is moved and this does not verify payment in the database.</p>
+                          <button className="primary-btn" type="button" onClick={() => handleSimulatePayment(b)} disabled={Boolean(demoPayments[`${customerAccount?.email || 'customer'}:${b.id}`])}>
+                            {demoPayments[`${customerAccount?.email || 'customer'}:${b.id}`] ? 'Demo payment completed' : `Simulate payment · ₹${Number(b.totalPrice || 0).toFixed(2)}`}
+                          </button>
                           {qrUrl ? (
                             <>
                               <p>Scan this host QR code with your payment app and pay exactly <strong>₹{Number(b.totalPrice).toFixed(2)}</strong>.</p>
@@ -2102,7 +2426,7 @@ function App() {
                             <div style={{ marginTop: '14px' }}>
                               <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Current QR code</p>
                               <img
-                                src={charger.paymentQrPath.startsWith('http') ? charger.paymentQrPath : `${API_BASE_URL}${charger.paymentQrPath}`}
+                                src={charger.paymentQrPath.startsWith('http') ? charger.paymentQrPath : `http://localhost:8080${charger.paymentQrPath}`}
                                 alt={`Payment QR code for ${charger.name}`}
                                 style={{ display: 'block', width: '180px', maxWidth: '100%', border: '1px solid #dbe7df', borderRadius: '12px', padding: '8px', background: '#fff' }}
                               />
@@ -2282,6 +2606,26 @@ function App() {
                   maxLength={255}
                   required
                 />
+              </div>
+
+              <div className="form-field">
+                <label>Charger map location (recommended)</label>
+                <button
+                  className="secondary-link"
+                  type="button"
+                  onClick={handleCaptureHostLocation}
+                  disabled={hostLocationBusy || hostLoading}
+                >
+                  {hostLocationBusy ? 'Detecting charger location...' : hostCoordinates ? '✓ Charger location captured — recapture' : '⌖ Use my current location for this charger'}
+                </button>
+                <p className="footer-note" style={{ marginTop: '8px' }}>
+                  Capture this while you are physically at the charging point. Your coordinates are used to rank nearby chargers for customers.
+                </p>
+                {hostCoordinates && (
+                  <p className="success-message" role="status">
+                    Coordinates ready: {hostCoordinates.latitude.toFixed(6)}, {hostCoordinates.longitude.toFixed(6)}
+                  </p>
+                )}
               </div>
 
               <div className="form-field">
