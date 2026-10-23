@@ -1,16 +1,56 @@
-# React + Vite
+# ChargeShare – EV Charging Marketplace
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+ChargeShare is a web-based Electric Vehicle (EV) charging marketplace that connects EV owners with charging station hosts.
 
-Currently, two official plugins are available:
+## Technology Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Frontend:** React, Vite, JavaScript, CSS
+- **Backend:** Java, Spring Boot, REST API
+- **Database:** MySQL
+- **Version Control:** Git and GitHub
 
-## React Compiler
+## Main Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Browse available EV chargers.
+- Search for chargers by city or area.
+- Support for car and bike charger categories.
+- Host charger registration and management.
+- Customer booking functionality.
+- Authentication and authorization.
+- Charger payment QR support.
+- Reviews and ratings.
 
-## Expanding the Oxlint configuration
+## Project Structure
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+- `src/` – React application source code.
+- `public/` – Public frontend assets.
+- `package.json` – Frontend dependencies and scripts.
+- `vite.config.js` – Vite configuration.
+
+## Run Locally
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+Open the local URL displayed in the terminal.
+
+## Backend
+
+The frontend communicates with the ChargeShare Spring Boot REST API. Configure the backend API URL for the environment where the application is deployed.
+
+## Security
+
+Never commit passwords, JWT secrets, API keys, or private environment files to GitHub. Configure sensitive values through environment variables.
+
+## Academic Project
+
+Developed as a college project to demonstrate an EV charging marketplace using modern web technologies.
