@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 
-const API_URL = 'http://localhost:8080/api/chargers'
-const AUTH_URL = 'http://localhost:8080/api/auth'
-const CUSTOMER_AUTH_URL = 'http://localhost:8080/api/customer-auth'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
+const API_URL = `${API_BASE_URL}/api/chargers`
+const AUTH_URL = `${API_BASE_URL}/api/auth`
+const CUSTOMER_AUTH_URL = `${API_BASE_URL}/api/customer-auth`
 const initialHostForm = {
   name: '',
   city: '',
@@ -117,7 +118,7 @@ function App() {
       return
     }
     try {
-      const response = await fetch('http://localhost:8080/api/notifications', {
+      const response = await fetch(`${API_BASE_URL}/api/notifications`, {
         headers: { Authorization: `Bearer ${account.token}` },
       })
       if (!response.ok) throw new Error(`Unable to load notifications (${response.status}).`)
@@ -149,7 +150,7 @@ function App() {
   const markNotificationRead = async (notificationId) => {
     if (!signedInAccount?.token) return
     try {
-      const response = await fetch(`http://localhost:8080/api/notifications/${notificationId}/read`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
         method: 'PATCH', headers: { Authorization: `Bearer ${signedInAccount.token}` },
       })
       if (!response.ok) throw new Error(`Could not mark notification as read (${response.status}).`)
@@ -160,7 +161,7 @@ function App() {
   const markAllNotificationsRead = async () => {
     if (!signedInAccount?.token) return
     try {
-      const response = await fetch('http://localhost:8080/api/notifications/read-all', {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
         method: 'PATCH', headers: { Authorization: `Bearer ${signedInAccount.token}` },
       })
       if (!response.ok) throw new Error(`Could not mark notifications as read (${response.status}).`)
@@ -212,7 +213,7 @@ function App() {
     let cancelled = false
     setCalendarLoading(true)
     setCalendarError('')
-    fetch(`http://localhost:8080/api/bookings/charger/${selectedCharger.id}/availability?${params}`, { headers: { Authorization: `Bearer ${customerAccount?.token || ''}` } })
+    fetch(`${API_BASE_URL}/api/bookings/charger/${selectedCharger.id}/availability?${params}`, { headers: { Authorization: `Bearer ${customerAccount?.token || ''}` } })
       .then(async (response) => {
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || `Availability could not be loaded (${response.status}).`)
@@ -374,7 +375,7 @@ function App() {
       let rankedChargers = await Promise.all(
         (Array.isArray(chargerResults) ? chargerResults : []).map(async (charger) => {
           try {
-            const reviewResponse = await fetch(`http://localhost:8080/api/reviews/charger/${charger.id}`)
+            const reviewResponse = await fetch(`${API_BASE_URL}/api/reviews/charger/${charger.id}`)
             if (!reviewResponse.ok) return { ...charger, averageChargerRating: null, reviewCount: 0 }
             const reviewData = await reviewResponse.json()
             const reviews = Array.isArray(reviewData.reviews) ? reviewData.reviews : []
@@ -661,7 +662,7 @@ function App() {
     if (slotIsBusy(bookingDate, bookingTime)) { setBookingError('This start time conflicts with an existing booking. Choose another green time slot.'); return }
     setBookingLoading(true); setBookingError(''); setBookingMessage('')
     try {
-      const response = await fetch('http://localhost:8080/api/bookings', {
+      const response = await fetch(`${API_BASE_URL}/api/bookings`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerAccount.token}` },
         body: JSON.stringify({ chargerId: selectedCharger.id, startTime: `${bookingDate}T${bookingTime}:00`, durationHours: Number(bookingDuration) })
       })
@@ -677,7 +678,7 @@ function App() {
     if (!customerAccount?.token) { openAuth('login', 'customer'); return }
     setShowCustomerBookings(true); setBookingHistoryLoading(true); setBookingHistoryError('')
     try {
-      const response = await fetch('http://localhost:8080/api/bookings/customer', { headers: { Authorization: `Bearer ${customerAccount.token}` } })
+      const response = await fetch(`${API_BASE_URL}/api/bookings/customer`, { headers: { Authorization: `Bearer ${customerAccount.token}` } })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || data.message || `Could not load bookings (${response.status}).`)
       const bookings = Array.isArray(data) ? data : []
@@ -686,7 +687,7 @@ function App() {
       // Check which bookings already have a review, without blocking booking history if this endpoint is unavailable.
       const reviewChecks = await Promise.all(bookings.map(async (booking) => {
         try {
-          const reviewResponse = await fetch(`http://localhost:8080/api/reviews/booking/${booking.id}/mine`, {
+          const reviewResponse = await fetch(`${API_BASE_URL}/api/reviews/booking/${booking.id}/mine`, {
             headers: { Authorization: `Bearer ${customerAccount.token}` },
           })
           return reviewResponse.ok ? booking.id : null
@@ -725,7 +726,7 @@ function App() {
     setReviewSubmittingId(booking.id)
     setReviewMessages((previous) => ({ ...previous, [booking.id]: null }))
     try {
-      const response = await fetch('http://localhost:8080/api/reviews', {
+      const response = await fetch(`${API_BASE_URL}/api/reviews`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerAccount.token}` },
         body: JSON.stringify({
@@ -754,7 +755,7 @@ function App() {
     setHostBookingActionId(bookingId)
     setBookingHistoryError('')
     try {
-      const response = await fetch(`http://localhost:8080/api/bookings/${bookingId}/cancel`, {
+      const response = await fetch(`${API_BASE_URL}/api/bookings/${bookingId}/cancel`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${customerAccount.token}` },
       })
@@ -772,7 +773,7 @@ function App() {
   const handleLoadHostBookings = async () => {
     if (!hostAccount?.token) return
     try {
-      const response = await fetch('http://localhost:8080/api/bookings/host', { headers: { Authorization: `Bearer ${hostAccount.token}` } })
+      const response = await fetch(`${API_BASE_URL}/api/bookings/host`, { headers: { Authorization: `Bearer ${hostAccount.token}` } })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || data.message || `Could not load bookings (${response.status}).`)
       setHostBookings(Array.isArray(data) ? data : []); setBookingHistoryError('')
@@ -790,7 +791,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:8080/api/bookings/${bookingId}/${decision}`,
+        `${API_BASE_URL}/api/bookings/${bookingId}/${decision}`,
         {
           method: 'PATCH',
           headers: {
@@ -830,7 +831,7 @@ function App() {
     setBookingHistoryError('')
     try {
       const response = await fetch(
-        `http://localhost:8080/api/bookings/${bookingId}/payment/${decision}`,
+        `${API_BASE_URL}/api/bookings/${bookingId}/payment/${decision}`,
         {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${hostAccount.token}` },
@@ -860,7 +861,7 @@ function App() {
     setEarningsLoading(true)
     setEarningsError('')
     try {
-      const response = await fetch('http://localhost:8080/api/earnings/host', {
+      const response = await fetch(`${API_BASE_URL}/api/earnings/host`, {
         headers: { Authorization: `Bearer ${hostAccount.token}` },
       })
       const data = await response.json().catch(() => ({}))
@@ -1897,7 +1898,7 @@ function App() {
               <div className="search-result-grid">
                 {customerBookings.map((b) => {
                   const qrUrl = b.paymentQrPath
-                    ? (b.paymentQrPath.startsWith('http') ? b.paymentQrPath : `http://localhost:8080${b.paymentQrPath}`)
+                    ? (b.paymentQrPath.startsWith('http') ? b.paymentQrPath : `${API_BASE_URL}${b.paymentQrPath}`)
                     : null
                   return (
                     <article className="search-charger-card" key={b.id}>
@@ -2426,7 +2427,7 @@ function App() {
                             <div style={{ marginTop: '14px' }}>
                               <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Current QR code</p>
                               <img
-                                src={charger.paymentQrPath.startsWith('http') ? charger.paymentQrPath : `http://localhost:8080${charger.paymentQrPath}`}
+                                src={charger.paymentQrPath.startsWith('http') ? charger.paymentQrPath : `${API_BASE_URL}${charger.paymentQrPath}`}
                                 alt={`Payment QR code for ${charger.name}`}
                                 style={{ display: 'block', width: '180px', maxWidth: '100%', border: '1px solid #dbe7df', borderRadius: '12px', padding: '8px', background: '#fff' }}
                               />
